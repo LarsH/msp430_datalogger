@@ -19,7 +19,6 @@ static volatile unsigned char wri=0, rdi=0;
 static volatile int isTransmitting = 0;
 __attribute__((interrupt(USCIAB0TX_VECTOR))) void USCI0TX_ISR(void)
 {
-   __bic_SR_register((unsigned)GIE);
    UC0IFG &= ~UCA0TXIFG;
    if(rdi != wri) {
       rdi = (rdi + 1) & (BUFSIZE-1);
@@ -28,7 +27,6 @@ __attribute__((interrupt(USCIAB0TX_VECTOR))) void USCI0TX_ISR(void)
    else {
       isTransmitting = 0;
    }
-   __bis_SR_register((unsigned)GIE);
 }
 
 static void uart_putchar(char c) {
@@ -76,7 +74,6 @@ static void transmit(enum trans_source ts) {
       flags |= 2;
    }
 
-   __bic_SR_register((unsigned)(GIE));
    c = ((1+tmpTar) & 0xff);
    d = ((tmpTar>>8) & 0xff);
    /* Avoid ascii 17 and 19, flow control */
@@ -91,12 +88,14 @@ static void transmit(enum trans_source ts) {
    uart_putchar((char) flags);
    uart_putchar((char) c);
    uart_putchar((char) d);
-   __bis_SR_register((unsigned)(GIE));
-
 }
 
 __attribute__((interrupt(TIMER0_A0_VECTOR))) void TIMERA_CCR0_ISR(void) {
    transmit(FROM_TIMER);
+}
+__attribute__((interrupt(TIMER0_A1_VECTOR))) void TIMERA_TA_ISR(void) {
+   transmit(FROM_TIMER);
+   TACTL &= (unsigned int) (~TAIFG);
 }
 
 
@@ -120,6 +119,7 @@ int main(void)
    P1SEL = TXD ;
    P1SEL2 = TXD ;
    P1DIR = TXLED + TXD + ERRLED; /* XXX: CAPT is set to zero */
+   P1OUT = 0; /* Clear all output pins; only ERRLED for now. */
 
    /* Uart init */
 #define BAUD_RATE  115200U
@@ -149,9 +149,12 @@ int main(void)
 #endif
 
    /* Timer init */
-   TACCR0 =  0xffffU; /* Have some margin to fire transmit. */
+   TACCR0 =  0x8000U; /* Fire extra transmit half way through TAR. */
    TACCTL0 = (unsigned int) CCIE; /* CCR0 interrupt enabled */
-   TACTL = (unsigned int) (TACLR+TASSEL_2+MC_1+ID_0+ID_1);/*clear,SMCLK/8,up*/
+
+   /*Clear timer, use clock SMCLK/8, continous mode, enable overflow interrupt*/
+   /* XXX Interrupt flag TAIFG is also cleared as we use TACTL = and not |= */
+   TACTL = (unsigned int) (TACLR + TASSEL_2+ID_0+ID_1 + MC_2 + TAIE);
 
    uart_puts("<STARTING>");
 
@@ -160,9 +163,10 @@ int main(void)
       __bis_SR_register((unsigned int) (GIE));
       tmp = P1IN & CAPT;
       if(tmp != current) {
-         P1OUT ^= ERRLED;
          current = tmp;
+         __bic_SR_register((unsigned)GIE);
          transmit(FROM_EDGE);
+         __bis_SR_register((unsigned)GIE);
       }
    }
 }
