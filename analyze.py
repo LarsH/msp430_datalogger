@@ -1,54 +1,73 @@
 #import matplotlib
 #matplotlib.use('GTKAgg') # do this before importing pylab
-import matplotlib.pyplot as plt
+#import matplotlib.pyplot as plt
 
-b = open('sample.bin').read()
-l = b.split('<STARTING>')
-k = map(len, l)
-print k
-b = l[1]
-print len(l) - 1
+def debug(s):
+   print s
+   pass
 
-x = [0,0]
-y = [-1,3]
-t = 0
-oldTar = 0
-oldC = 0
+def openlogfile(fname):
+   debug('Loading file')
+   b = open(fname).read()
+   debug('Splitting')
+   l = b.split('<STARTING>')
+   debug('Split done')
+   assert len(l) != 1, "Could not find starting point in logfile"
 
-b = map(ord, b)
-l1 = b[0::3]
-l2 = b[1::3]
-l3 = b[2::3]
+   if len(l) > 2:
+      print "Warning: More than one start found in logfile, using first only"
+   b = l[1]
 
-for f, t1, t2 in zip(l1, l2, l3):
+   samples = []
 
-   c = f & 1
-   if f & 8:
-      t2 |= 1
-   if f & 16:
-      t1 |= 1
-   isTime = f & 2
+   t = 0                   # Accumulated time
+   oldVal = oldTar = 0     # Holds values from previous sample during iteration
 
-   tar = t1 + (t2*256)
-   dt = tar - oldTar
-   if oldTar >= tar:
-      dt += 0x10000
-   t += dt
+   debug('Starting iteration...')
 
-   #print "%2u %8u %1u %u" %(c, tar, isTime, dt)
+   i = 0 # index counter
+   while i+3 <= len(b):
+      flags, t1, t2 = ord(b[i]), ord(b[i+1]), ord(b[i+2])
 
-   if c != oldC or isTime:
-      x += [t]
-      y += [oldC]
-   if f & 2:
-      x += [t]
-      y += [2]
-   x += [t]
-   y += [c]
-   oldC = c
-   oldTar = tar
-   if len(x) > 10000:
-      break
+      if i % 10000 == 0:
+         debug('%u / %u (%f)'%(i, len(b), i/float(len(b))))
 
+      # Mask out measured value
+      val = flags & 1
+
+      # Handle escaped flow control characters
+      if flags & 8:
+         t2 |= 1
+      if flags & 16:
+         t1 |= 1
+
+      # Is the current sampling from a timer?
+      isTime = flags & 2
+
+      # Decode then stored TAR register
+      tar = t1 + (t2*256)
+      dt = tar - oldTar
+
+      if oldTar >= tar:
+         # The TAR register wrapped around, adjust for that
+         dt += 0x10000
+
+      # Accumulate time
+      t += dt
+
+      samples += [(t, val)]
+      i += 3
+
+   return samples
+
+'''
 plt.plot(x,y,'*-')
 plt.show()
+'''
+
+from sys import argv
+if __name__ == '__main__':
+   if len(argv) != 2:
+      print "Usage: %s logfile" % argv[0]
+   else:
+      f = openlogfile(argv[1])
